@@ -50,3 +50,5 @@ __pycache__/
 
 # Logs
 *.log
+
+*.ncu-rep

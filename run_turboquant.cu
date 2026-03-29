@@ -72,7 +72,7 @@ int main(void) {
     /* -----------------------------------------------------------------
      * Configuration
      * ----------------------------------------------------------------- */
-    const int n_vectors = 256;       /* Number of KV cache vectors to process */
+    const int n_vectors = 2048;       /* Number of KV cache vectors to process */
     const int d = TQ_HEAD_DIM;       /* Head dimension (128) */
     const size_t src_size = n_vectors * d * sizeof(float);
     const size_t dst_size = n_vectors * sizeof(block_tq3);
@@ -102,9 +102,10 @@ int main(void) {
     float * h_src = (float *)malloc(src_size);
     float * h_dst = (float *)malloc(src_size);
     float * h_rotation = ctx.rotation;  /* Reuse context rotation matrix */
+    float * h_rotation_bwd = ctx.rotation_bwd;  /* Reuse context rotation matrix */
     uint8_t * h_blocks = (uint8_t *)malloc(dst_size);
 
-    printf("         %s Allocated %zu bytes host memory\n", PASS, 
+    printf("         %s Allocated %zu bytes host memory\n", PASS,
            src_size + dst_size);
 
     /* -----------------------------------------------------------------
@@ -133,11 +134,13 @@ int main(void) {
     float * d_src = NULL;
     float * d_dst = NULL;
     float * d_rotation = NULL;
+    float * d_rotation_bwd = NULL;
     uint8_t * d_blocks = NULL;
 
     CUDA_CHECK(cudaMalloc((void **)&d_src, src_size));
     CUDA_CHECK(cudaMalloc((void **)&d_dst, src_size));
     CUDA_CHECK(cudaMalloc((void **)&d_rotation, d * d * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void **)&d_rotation_bwd, d * d * sizeof(float)));
     CUDA_CHECK(cudaMalloc((void **)&d_blocks, dst_size));
 
     printf("         %s Allocated device memory\n", PASS);
@@ -148,7 +151,9 @@ int main(void) {
     printf("\n[Step 5] Copying data to GPU...\n");
 
     CUDA_CHECK(cudaMemcpy(d_src, h_src, src_size, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_rotation, h_rotation, d * d * sizeof(float), 
+    CUDA_CHECK(cudaMemcpy(d_rotation, h_rotation, d * d * sizeof(float),
+                          cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_rotation_bwd, h_rotation_bwd, d * d * sizeof(float),
                           cudaMemcpyHostToDevice));
 
     printf("         %s Copied input vectors and rotation matrix\n", PASS);
@@ -192,7 +197,8 @@ int main(void) {
     /* Timed runs */
     for (int i = 0; i < n_runs; i++) {
         CUDA_CHECK(cudaEventRecord(start, stream));
-        tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation, n_vectors, stream);
+        // tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation, n_vectors, stream);
+        tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation_bwd, n_vectors, stream);
         CUDA_CHECK(cudaEventRecord(stop, stream));
         CUDA_CHECK(cudaEventSynchronize(stop));
         CUDA_CHECK(cudaEventElapsedTime(&quant_times[i], start, stop));
@@ -247,6 +253,7 @@ int main(void) {
     for (int i = 0; i < n_runs; i++) {
         CUDA_CHECK(cudaEventRecord(start, stream));
         tq_cuda_dequantize_tq3(d_blocks, d_dst, d_rotation, n_vectors, stream);
+        // tq_cuda_dequantize_tq3(d_blocks, d_dst, d_rotation_bwd, n_vectors, stream);
         CUDA_CHECK(cudaEventRecord(stop, stream));
         CUDA_CHECK(cudaEventSynchronize(stop));
         CUDA_CHECK(cudaEventElapsedTime(&dequant_times[i], start, stop));
@@ -310,6 +317,7 @@ int main(void) {
     CUDA_CHECK(cudaFree(d_src));
     CUDA_CHECK(cudaFree(d_dst));
     CUDA_CHECK(cudaFree(d_rotation));
+    CUDA_CHECK(cudaFree(d_rotation_bwd));
     CUDA_CHECK(cudaFree(d_blocks));
     free(h_src);
     free(h_dst);

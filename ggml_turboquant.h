@@ -158,6 +158,7 @@ typedef struct {
     int      n_levels;                      /* 2^bits                        */
     const float * codebook;                 /* Pointer to static codebook    */
     float    rotation[TQ_HEAD_DIM * TQ_HEAD_DIM]; /* Orthogonal rotation Π  */
+    float    rotation_bwd[TQ_HEAD_DIM * TQ_HEAD_DIM]; /* Orthogonal rotation Π  */
 } tq_context;
 
 /* =========================================================================

@@ -72,7 +72,7 @@ static float tq_rng_normal(tq_rng * rng) {
  * modified Gram-Schmidt. The result is stored row-major in ctx->rotation.
  * ========================================================================= */
 
-static void tq_generate_rotation(float * R, int d, uint64_t seed) {
+static void tq_generate_rotation(float * R,  float *R_r, int d, uint64_t seed) {
     tq_rng rng;
     tq_rng_seed(&rng, seed);
 
@@ -113,7 +113,14 @@ static void tq_generate_rotation(float * R, int d, uint64_t seed) {
             }
         }
     }
+
+    for (int i = 0; i < d; i++) {
+        for (int j = 0; j < d; j++) {
+            R_r[j * d + i] = R[i * d + j];
+        }
+    }
 }
+
 
 /* =========================================================================
  * Section 3: Context Initialization
@@ -136,7 +143,7 @@ int tq_context_init(tq_context * ctx, int bits, uint64_t seed) {
     }
 
     /* Generate rotation matrix */
-    tq_generate_rotation(ctx->rotation, ctx->d, seed);
+    tq_generate_rotation(ctx->rotation, ctx->rotation_bwd, ctx->d, seed);
 
     return 0;
 }

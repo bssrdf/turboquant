@@ -128,9 +128,11 @@ __global__ void tq_quantize_kernel_tq3(
 
     /* Step 3: Rotate — each thread computes y[tid] = row tid of Π · x_unit */
     float y_val = 0.0f;
-    const float * my_row = rotation + tid * d;
+    // const float * my_row = rotation + tid * d;
     for (int j = 0; j < d; j++) {
-        y_val += my_row[j] * s_input[j] * inv_norm;
+        const float * my_row = rotation + j * d;
+        y_val += my_row[tid] * s_input[j] * inv_norm;
+        // y_val += my_row[j] * s_input[j] * inv_norm;
     }
 
     /* Step 4: Find nearest codebook centroid */
