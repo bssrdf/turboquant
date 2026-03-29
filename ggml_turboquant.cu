@@ -80,11 +80,12 @@ __global__ void tq_quantize_kernel_tq3(
     const int tid = threadIdx.x;  /* 0..127, one per coordinate */
     const int d = TQ_HEAD_DIM;    /* 128 */
 
+    unsigned int lane_id = tid % 32;
+    int nwarps = blockDim.x / 32; /* Should be 4 for 128 threads */
+
     /* Shared memory: input vector + norm */
     __shared__ float s_input[TQ_HEAD_DIM];
-    __shared__ float s_norm_sq;
-    // __shared__ uint8_t s_indices[TQ_HEAD_DIM];
-    __shared__ uint8_t s_packed[TQ3_INDEX_BYTES];
+    float s_norm_sq;
 
     /* Step 1: Load input vector */
     s_input[tid] = src[vec_idx * d + tid];
@@ -105,11 +106,8 @@ __global__ void tq_quantize_kernel_tq3(
     }
     __syncthreads();
 
-    if (tid == 0) {
-        s_norm_sq = s_warp_sums[0] + s_warp_sums[1] +
-                    s_warp_sums[2] + s_warp_sums[3];
-    }
-    __syncthreads();
+    s_norm_sq = s_warp_sums[0] + s_warp_sums[1] +
+                s_warp_sums[2] + s_warp_sums[3];
 
     float norm = sqrtf(s_norm_sq);
 
@@ -128,17 +126,13 @@ __global__ void tq_quantize_kernel_tq3(
 
     /* Step 3: Rotate — each thread computes y[tid] = row tid of Π · x_unit */
     float y_val = 0.0f;
-    // const float * my_row = rotation + tid * d;
     for (int j = 0; j < d; j++) {
         const float * my_row = rotation + j * d;
         y_val += my_row[tid] * s_input[j] * inv_norm;
-        // y_val += my_row[j] * s_input[j] * inv_norm;
     }
 
     /* Step 4: Find nearest codebook centroid */
-    // s_indices[tid] = tq_find_nearest(y_val, d_codebook_3, 8);
     uint8_t s_indices = tq_find_nearest(y_val, d_codebook_3, 8);
-    // __syncthreads();
 
     /* Step 5: Cooperative bit-packing (3-bit) */
     /* Each thread packs its own 3 bits into the shared packed array */
@@ -146,35 +140,47 @@ __global__ void tq_quantize_kernel_tq3(
     //     /* Clear output */
     //     for (int i = 0; i < TQ3_INDEX_BYTES; i++) s_packed[i] = 0;
     // }
-    if (tid < TQ3_INDEX_BYTES) {
-        /* Clear output */
-        s_packed[tid] = 0;
-    }
-    __syncthreads();
+    // __syncthreads();
 
+    unsigned int bit[3] = {0};
     {
-        int bit_start = tid * 3;
-        // uint8_t val = s_indices[tid];
+#pragma unroll
         for (int b = 0; b < 3; b++) {
-            int bit_pos = bit_start + b;
-            // if (val & (1 << b)) {
+            unsigned int val = 0;
             if (s_indices & (1 << b)) {
-                atomicOr((unsigned int *)(s_packed + (bit_pos / 8) - (bit_pos / 8) % 4),
-                         (unsigned int)(1 << (bit_pos % 32)));
+                // atomicOr((unsigned int *)(s_packed + (bit_pos / 8) - (bit_pos / 8) % 4),
+                //          (unsigned int)(1 << (bit_pos % 32)));
+                val |= (1 << lane_id);
             }
+            bit[b] = __reduce_or_sync(0xffffffff, val);
         }
     }
     /* Alternative: single-threaded packing is simpler and fast enough
      * for 48 bytes. Use if atomicOr alignment is problematic. */
-    __syncthreads();
+    // __syncthreads();
+
+    unsigned int bit_inter[3] = {0};
+#pragma unroll
+    for (int k = 0; k < 32; k++) {
+#pragma unroll
+        for (int i = 0; i < 3; i++) {
+            int          pos  = 3 * k + i;          // output bit index in [0, 95]
+            unsigned int b  = (bit[i] >> k) & 1u;   // extract bit k from a[i]
+            bit_inter[pos >> 5] |= b << (pos & 31);        // pos>>5 = word, pos&31 = bit within word
+        }
+    }
 
     /* Step 6: Write output */
-    if (tid == 0) {
+    if (tid % 32 == 0) {
         block_tq3 * blk = (block_tq3 *)((uint8_t *)dst +
                            vec_idx * sizeof(block_tq3));
-        blk->norm = norm;
-        for (int i = 0; i < TQ3_INDEX_BYTES; i++) {
-            blk->indices[i] = s_packed[i];
+        if (tid == 0) {
+            blk->norm = norm;
+        }
+        unsigned int * blk_indices = (unsigned int *)(blk->indices + tid/32*TQ3_INDEX_BYTES/nwarps); // 12 to be generalized
+#pragma unroll
+        for (int b = 0; b < 3; b++) {
+            blk_indices[b] = bit_inter[b];
         }
     }
 }

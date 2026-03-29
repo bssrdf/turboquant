@@ -72,7 +72,7 @@ int main(void) {
     /* -----------------------------------------------------------------
      * Configuration
      * ----------------------------------------------------------------- */
-    const int n_vectors = 2048;       /* Number of KV cache vectors to process */
+    const int n_vectors = 2056;       /* Number of KV cache vectors to process */
     const int d = TQ_HEAD_DIM;       /* Head dimension (128) */
     const size_t src_size = n_vectors * d * sizeof(float);
     const size_t dst_size = n_vectors * sizeof(block_tq3);
