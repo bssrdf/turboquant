@@ -1,0 +1,52 @@
+# Compiled executables
+*.exe
+*.out
+run_turboquant
+tq_test
+
+# Object files and libraries
+*.obj
+*.o
+*.lib
+*.a
+*.so
+*.dylib
+
+# CUDA intermediate files
+*.cu.obj
+*.cudafe++*.cpp
+*.cudafe1.*
+*.fatbin.c
+*.ftz
+*.link
+*.meta
+*.tmpxft_*
+
+# Build artifacts
+build/
+build.bat
+*.exp
+*.ilk
+*.pdb
+*.idb
+
+# IDE files
+.vscode/
+.idea/
+*.vcxproj
+*.sln
+*.suo
+*.user
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Logs
+*.log

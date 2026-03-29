@@ -16,6 +16,7 @@
  */
 
 #include "ggml_turboquant.h"
+#include "ggml_turboquant_cuda.h"
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,7 +98,7 @@ int main(void) {
      * Step 2: Allocate host memory
      * ----------------------------------------------------------------- */
     printf("\n[Step 2] Allocating host memory...\n");
-    
+
     float * h_src = (float *)malloc(src_size);
     float * h_dst = (float *)malloc(src_size);
     float * h_rotation = ctx.rotation;  /* Reuse context rotation matrix */
@@ -110,7 +111,7 @@ int main(void) {
      * Step 3: Generate test input vectors (random unit vectors)
      * ----------------------------------------------------------------- */
     printf("\n[Step 3] Generating test vectors...\n");
-    
+
     for (int i = 0; i < n_vectors; i++) {
         float norm = 0.0f;
         for (int j = 0; j < d; j++) {
@@ -128,7 +129,7 @@ int main(void) {
      * Step 4: Allocate device memory
      * ----------------------------------------------------------------- */
     printf("\n[Step 4] Allocating device memory...\n");
-    
+
     float * d_src = NULL;
     float * d_dst = NULL;
     float * d_rotation = NULL;
@@ -145,7 +146,7 @@ int main(void) {
      * Step 5: Copy data to device
      * ----------------------------------------------------------------- */
     printf("\n[Step 5] Copying data to GPU...\n");
-    
+
     CUDA_CHECK(cudaMemcpy(d_src, h_src, src_size, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_rotation, h_rotation, d * d * sizeof(float), 
                           cudaMemcpyHostToDevice));
@@ -156,7 +157,7 @@ int main(void) {
      * Step 6: Initialize CUDA codebooks (constant memory)
      * ----------------------------------------------------------------- */
     printf("\n[Step 6] Initializing CUDA codebooks...\n");
-    
+
     tq_cuda_init_codebooks();
     printf("         %s Codebooks loaded to constant memory\n", PASS);
 
@@ -164,38 +165,58 @@ int main(void) {
      * Step 7: Create CUDA stream for async execution
      * ----------------------------------------------------------------- */
     printf("\n[Step 7] Creating CUDA stream...\n");
-    
+
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreate(&stream));
     printf("         %s Stream created\n", PASS);
 
     /* -----------------------------------------------------------------
-     * Step 8: Call tq_cuda_quantize_tq3 kernel
+     * Step 8: Call tq_cuda_quantize_tq3 kernel (multiple runs for timing)
      * ----------------------------------------------------------------- */
     printf("\n[Step 8] Running quantize kernel...\n");
-    
+
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
 
-    CUDA_CHECK(cudaEventRecord(start, stream));
-    tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation, n_vectors, stream);
-    CUDA_CHECK(cudaEventRecord(stop, stream));
-    CUDA_CHECK(cudaEventSynchronize(stop));
+    const int n_warmup = 3;
+    const int n_runs = 20;
+    float quant_times[n_runs];
 
-    float quant_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&quant_ms, start, stop));
+    /* Warmup runs */
+    for (int i = 0; i < n_warmup; i++) {
+        tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation, n_vectors, stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
 
-    printf("         %s Quantized %d vectors in %.3f ms\n", PASS, 
-           n_vectors, quant_ms);
-    printf("         Throughput: %.0f vectors/sec\n", 
-           n_vectors / (quant_ms / 1000.0));
+    /* Timed runs */
+    for (int i = 0; i < n_runs; i++) {
+        CUDA_CHECK(cudaEventRecord(start, stream));
+        tq_cuda_quantize_tq3(d_src, d_blocks, d_rotation, n_vectors, stream);
+        CUDA_CHECK(cudaEventRecord(stop, stream));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventElapsedTime(&quant_times[i], start, stop));
+    }
+
+    /* Compute average and min/max */
+    float quant_min = quant_times[0], quant_max = quant_times[0], quant_sum = 0.0f;
+    for (int i = 0; i < n_runs; i++) {
+        quant_sum += quant_times[i];
+        if (quant_times[i] < quant_min) quant_min = quant_times[i];
+        if (quant_times[i] > quant_max) quant_max = quant_times[i];
+    }
+    float quant_avg = quant_sum / n_runs;
+
+    printf("         %s Quantized %d vectors (%d runs)\n", PASS, n_vectors, n_runs);
+    printf("         Average: %.3f ms (%.0f vec/s)\n", 
+           quant_avg, n_vectors / (quant_avg / 1000.0));
+    printf("         Min/Max: %.3f / %.3f ms\n", quant_min, quant_max);
 
     /* -----------------------------------------------------------------
      * Step 9: Copy quantized blocks back to host (for inspection)
      * ----------------------------------------------------------------- */
     printf("\n[Step 9] Copying quantized blocks to host...\n");
-    
+
     CUDA_CHECK(cudaMemcpy(h_blocks, d_blocks, dst_size, cudaMemcpyDeviceToHost));
     printf("         %s Copied %zu bytes of quantized data\n", PASS, dst_size);
 
@@ -210,28 +231,46 @@ int main(void) {
     printf("\n");
 
     /* -----------------------------------------------------------------
-     * Step 10: Call tq_cuda_dequantize_tq3 kernel
+     * Step 10: Call tq_cuda_dequantize_tq3 kernel (multiple runs for timing)
      * ----------------------------------------------------------------- */
     printf("\n[Step 10] Running dequantize kernel...\n");
-    
-    CUDA_CHECK(cudaEventRecord(start, stream));
-    tq_cuda_dequantize_tq3(d_blocks, d_dst, d_rotation, n_vectors, stream);
-    CUDA_CHECK(cudaEventRecord(stop, stream));
-    CUDA_CHECK(cudaEventSynchronize(stop));
 
-    float dequant_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&dequant_ms, start, stop));
+    float dequant_times[n_runs];
 
-    printf("         %s Dequantized %d vectors in %.3f ms\n", PASS, 
-           n_vectors, dequant_ms);
-    printf("         Throughput: %.0f vectors/sec\n", 
-           n_vectors / (dequant_ms / 1000.0));
+    /* Warmup runs */
+    for (int i = 0; i < n_warmup; i++) {
+        tq_cuda_dequantize_tq3(d_blocks, d_dst, d_rotation, n_vectors, stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
+
+    /* Timed runs */
+    for (int i = 0; i < n_runs; i++) {
+        CUDA_CHECK(cudaEventRecord(start, stream));
+        tq_cuda_dequantize_tq3(d_blocks, d_dst, d_rotation, n_vectors, stream);
+        CUDA_CHECK(cudaEventRecord(stop, stream));
+        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventElapsedTime(&dequant_times[i], start, stop));
+    }
+
+    /* Compute average and min/max */
+    float dequant_min = dequant_times[0], dequant_max = dequant_times[0], dequant_sum = 0.0f;
+    for (int i = 0; i < n_runs; i++) {
+        dequant_sum += dequant_times[i];
+        if (dequant_times[i] < dequant_min) dequant_min = dequant_times[i];
+        if (dequant_times[i] > dequant_max) dequant_max = dequant_times[i];
+    }
+    float dequant_avg = dequant_sum / n_runs;
+
+    printf("         %s Dequantized %d vectors (%d runs)\n", PASS, n_vectors, n_runs);
+    printf("         Average: %.3f ms (%.0f vec/s)\n", 
+           dequant_avg, n_vectors / (dequant_avg / 1000.0));
+    printf("         Min/Max: %.3f / %.3f ms\n", dequant_min, dequant_max);
 
     /* -----------------------------------------------------------------
      * Step 11: Copy dequantized results back to host
      * ----------------------------------------------------------------- */
     printf("\n[Step 11] Copying dequantized vectors to host...\n");
-    
+
     CUDA_CHECK(cudaMemcpy(h_dst, d_dst, src_size, cudaMemcpyDeviceToHost));
     printf("         %s Copied dequantized vectors\n", PASS);
 
@@ -239,7 +278,7 @@ int main(void) {
      * Step 12: Validate results (compute MSE)
      * ----------------------------------------------------------------- */
     printf("\n[Step 12] Validating results...\n");
-    
+
     float total_mse = 0.0f;
     for (int i = 0; i < n_vectors; i++) {
         float mse = 0.0f;
@@ -253,7 +292,7 @@ int main(void) {
 
     printf("         Average MSE: %.6f (paper expects ~0.034 for TQ3)\n", 
            avg_mse);
-    
+
     if (avg_mse < 0.1f) {
         printf("         %s MSE within acceptable range\n", PASS);
     } else {
@@ -264,7 +303,7 @@ int main(void) {
      * Cleanup
      * ----------------------------------------------------------------- */
     printf("\n[Cleanup] Freeing resources...\n");
-    
+
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
     CUDA_CHECK(cudaStreamDestroy(stream));
@@ -282,11 +321,11 @@ int main(void) {
      * Summary
      * ----------------------------------------------------------------- */
     printf("\n=========================================================\n");
-    printf("Summary:\n");
-    printf("  - Quantize:   %.3f ms (%.0f vec/s)\n", 
-           quant_ms, n_vectors / (quant_ms / 1000.0));
-    printf("  - Dequantize: %.3f ms (%.0f vec/s)\n", 
-           dequant_ms, n_vectors / (dequant_ms / 1000.0));
+    printf("Summary (%d runs, %d vectors each):\n", n_runs, n_vectors);
+    printf("  - Quantize:   %.3f ms avg (%.0f vec/s) [%.3f-%.3f]\n", 
+           quant_avg, n_vectors / (quant_avg / 1000.0), quant_min, quant_max);
+    printf("  - Dequantize: %.3f ms avg (%.0f vec/s) [%.3f-%.3f]\n", 
+           dequant_avg, n_vectors / (dequant_avg / 1000.0), dequant_min, dequant_max);
     printf("  - MSE:        %.6f\n", avg_mse);
     printf("=========================================================\n");
 

@@ -125,7 +125,7 @@ typedef struct {
 } block_tq3;
 
 /* Verify size at compile time */
-_Static_assert(sizeof(block_tq3) == 4 + TQ3_INDEX_BYTES,
+static_assert(sizeof(block_tq3) == 4 + TQ3_INDEX_BYTES,
                "block_tq3 size mismatch");
 
 /* Block size for TQ4: one head_dim vector */
@@ -138,7 +138,7 @@ typedef struct {
     uint8_t  indices[TQ4_INDEX_BYTES];
 } block_tq4;
 
-_Static_assert(sizeof(block_tq4) == 4 + TQ4_INDEX_BYTES,
+static_assert(sizeof(block_tq4) == 4 + TQ4_INDEX_BYTES,
                "block_tq4 size mismatch");
 
 /*
