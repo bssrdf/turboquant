@@ -83,7 +83,7 @@ __global__ void tq_quantize_kernel_tq3(
     /* Shared memory: input vector + norm */
     __shared__ float s_input[TQ_HEAD_DIM];
     __shared__ float s_norm_sq;
-    __shared__ uint8_t s_indices[TQ_HEAD_DIM];
+    // __shared__ uint8_t s_indices[TQ_HEAD_DIM];
     __shared__ uint8_t s_packed[TQ3_INDEX_BYTES];
 
     /* Step 1: Load input vector */
@@ -136,23 +136,29 @@ __global__ void tq_quantize_kernel_tq3(
     }
 
     /* Step 4: Find nearest codebook centroid */
-    s_indices[tid] = tq_find_nearest(y_val, d_codebook_3, 8);
-    __syncthreads();
+    // s_indices[tid] = tq_find_nearest(y_val, d_codebook_3, 8);
+    uint8_t s_indices = tq_find_nearest(y_val, d_codebook_3, 8);
+    // __syncthreads();
 
     /* Step 5: Cooperative bit-packing (3-bit) */
     /* Each thread packs its own 3 bits into the shared packed array */
-    if (tid == 0) {
+    // if (tid == 0) {
+    //     /* Clear output */
+    //     for (int i = 0; i < TQ3_INDEX_BYTES; i++) s_packed[i] = 0;
+    // }
+    if (tid < TQ3_INDEX_BYTES) {
         /* Clear output */
-        for (int i = 0; i < TQ3_INDEX_BYTES; i++) s_packed[i] = 0;
+        s_packed[tid] = 0;
     }
     __syncthreads();
 
     {
         int bit_start = tid * 3;
-        uint8_t val = s_indices[tid];
+        // uint8_t val = s_indices[tid];
         for (int b = 0; b < 3; b++) {
             int bit_pos = bit_start + b;
-            if (val & (1 << b)) {
+            // if (val & (1 << b)) {
+            if (s_indices & (1 << b)) {
                 atomicOr((unsigned int *)(s_packed + (bit_pos / 8) - (bit_pos / 8) % 4),
                          (unsigned int)(1 << (bit_pos % 32)));
             }
