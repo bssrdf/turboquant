@@ -27,6 +27,16 @@ typedef struct {
     uint64_t s[4];
 } tq_rng;
 
+// Host-side init (call once before kernel launch):
+void build_spread_table(unsigned int *h_spread) {
+    for (int x = 0; x < 256; x++) {
+        unsigned int out = 0;
+        for (int k = 0; k < 8; k++)
+            if ((x >> k) & 1) out |= 1u << (3 * k);
+        h_spread[x] = out;
+    }
+}
+
 static inline uint64_t tq_rng_rotl(uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }

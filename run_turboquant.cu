@@ -82,6 +82,8 @@ int main(void) {
     printf("         Output size: %.2f KB (TQ3 quantized)\n", dst_size / 1024.0);
     printf("         Compression: %.1fx\n\n", (float)src_size / dst_size);
 
+    build_spread_table(spread3);
+
     /* -----------------------------------------------------------------
      * Step 1: Initialize CPU context to get rotation matrix
      * ----------------------------------------------------------------- */
@@ -163,7 +165,7 @@ int main(void) {
      * ----------------------------------------------------------------- */
     printf("\n[Step 6] Initializing CUDA codebooks...\n");
 
-    tq_cuda_init_codebooks();
+    tq_cuda_init_codebooks(spread3);
     printf("         %s Codebooks loaded to constant memory\n", PASS);
 
     /* -----------------------------------------------------------------

@@ -96,6 +96,10 @@ static const float TQ_CODEBOOK_4[16] = {
      0.23961253307138697f
 };
 
+static unsigned int spread3[256] = {8};              /* RNG state for codebook search */
+
+
+void build_spread_table(unsigned int *);
 /* =========================================================================
  * Section 3: Data Structures
  * ========================================================================= */
@@ -160,6 +164,7 @@ typedef struct {
     float    rotation[TQ_HEAD_DIM * TQ_HEAD_DIM]; /* Orthogonal rotation Π  */
     float    rotation_bwd[TQ_HEAD_DIM * TQ_HEAD_DIM]; /* Orthogonal rotation Π  */
 } tq_context;
+
 
 /* =========================================================================
  * Section 4: Core API — CPU Reference Implementation

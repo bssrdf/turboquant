@@ -16,7 +16,7 @@
  * Authors: Jim Sullivan / Claude collaboration
  * Date: 2026-03-25
  */
-
+#include <stdio.h>
 #include "ggml_turboquant.h"
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -30,6 +30,9 @@
 
 __constant__ float d_codebook_3[8];
 __constant__ float d_codebook_4[16];
+// Precompute on host, pass as __constant__ memory.
+// spread3[x] spreads 8 bits of x into 24 bits: bit k -> bit 3k
+__constant__ unsigned int d_spread3[256];
 
 /* =========================================================================
  * Section 2: Device Helper — Find Nearest Centroid
@@ -160,15 +163,37 @@ __global__ void tq_quantize_kernel_tq3(
     // __syncthreads();
 
     unsigned int bit_inter[3] = {0};
-#pragma unroll
-    for (int k = 0; k < 32; k++) {
-#pragma unroll
-        for (int i = 0; i < 3; i++) {
-            int          pos  = 3 * k + i;          // output bit index in [0, 95]
-            unsigned int b  = (bit[i] >> k) & 1u;   // extract bit k from a[i]
-            bit_inter[pos >> 5] |= b << (pos & 31);        // pos>>5 = word, pos&31 = bit within word
+// #pragma unroll
+//     for (int k = 0; k < 32; k++) {
+// #pragma unroll
+//         for (int i = 0; i < 3; i++) {
+//             int          pos  = 3 * k + i;          // output bit index in [0, 95]
+//             unsigned int b  = (bit[i] >> k) & 1u;   // extract bit k from a[i]
+//             bit_inter[pos >> 5] |= b << (pos & 31);        // pos>>5 = word, pos&31 = bit within word
+//         }
+//     }
+
+    // 96-bit result stored as two 64-bit halves, then split into 3×32
+    // Process a[i] byte by byte, each byte spreads to 24 bits, shifted to position i
+    unsigned long long lo = 0, hi = 0;  // bits [0..63] and [64..95]
+
+    for (int i = 0; i < 3; i++) {
+        for (int byte_idx = 0; byte_idx < 4; byte_idx++) {
+            unsigned int byte_val = (bit[i] >> (8 * byte_idx)) & 0xFF;
+            unsigned int spread   = d_spread3[byte_val];          // 24-bit spread
+            int base_pos = 24 * byte_idx + i;                   // output bit start
+            if (base_pos < 64)
+                lo |= (unsigned long long)spread << base_pos;
+
+            if (base_pos >= 64)
+                hi |= (unsigned long long)spread << (base_pos - 64);   // was: >> (64 - base_pos) → UB
+            else if (base_pos + 24 > 64)
+                hi |= (unsigned long long)spread >> (64 - base_pos);   // straddle case: correct
         }
     }
+    bit_inter[0] = (unsigned int)(lo);
+    bit_inter[1] = (unsigned int)(lo >> 32);
+    bit_inter[2] = (unsigned int)(hi);
 
     /* Step 6: Write output */
     if (tid % 32 == 0) {
@@ -268,11 +293,14 @@ __global__ void tq_dequantize_kernel_tq3(
 
 /* Initialize constant memory with codebooks (call once at startup) */
 extern "C"
-void tq_cuda_init_codebooks(void) {
+void tq_cuda_init_codebooks(const unsigned int *spread3) {
     cudaMemcpyToSymbol(d_codebook_3, TQ_CODEBOOK_3,
                         8 * sizeof(float), 0, cudaMemcpyHostToDevice);
     cudaMemcpyToSymbol(d_codebook_4, TQ_CODEBOOK_4,
                         16 * sizeof(float), 0, cudaMemcpyHostToDevice);
+    cudaError_t err =cudaMemcpyToSymbol(d_spread3, spread3,
+                        256 * sizeof(unsigned int), 0, cudaMemcpyHostToDevice);
+
 }
 
 /* Quantize n_vectors on GPU */

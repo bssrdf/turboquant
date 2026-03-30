@@ -33,7 +33,7 @@ extern "C" {
  *
  * @return void
  */
-void tq_cuda_init_codebooks(void);
+void tq_cuda_init_codebooks(const unsigned int *);
 
 /* =========================================================================
  * TQ3 (3-bit) Kernels
