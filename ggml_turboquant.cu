@@ -162,7 +162,6 @@ __global__ void tq_quantize_kernel_tq3(
      * for 48 bytes. Use if atomicOr alignment is problematic. */
     // __syncthreads();
 
-    unsigned int bit_inter[3] = {0};
 // #pragma unroll
 //     for (int k = 0; k < 32; k++) {
 // #pragma unroll
@@ -191,9 +190,6 @@ __global__ void tq_quantize_kernel_tq3(
                 hi |= (unsigned long long)spread >> (64 - base_pos);   // straddle case: correct
         }
     }
-    bit_inter[0] = (unsigned int)(lo);
-    bit_inter[1] = (unsigned int)(lo >> 32);
-    bit_inter[2] = (unsigned int)(hi);
 
     /* Step 6: Write output */
     if (tid % 32 == 0) {
@@ -203,10 +199,9 @@ __global__ void tq_quantize_kernel_tq3(
             blk->norm = norm;
         }
         unsigned int * blk_indices = (unsigned int *)(blk->indices + tid/32*TQ3_INDEX_BYTES/nwarps); // 12 to be generalized
-#pragma unroll
-        for (int b = 0; b < 3; b++) {
-            blk_indices[b] = bit_inter[b];
-        }
+        blk_indices[0] = (unsigned int)(lo);
+        blk_indices[1] = (unsigned int)(lo >> 32);
+        blk_indices[2] = (unsigned int)(hi);
     }
 }
 
