@@ -172,27 +172,27 @@ __global__ void tq_quantize_kernel_tq3(
 //         }
 //     }
 
+   if (lane_id == 0) {
     // 96-bit result stored as two 64-bit halves, then split into 3×32
     // Process a[i] byte by byte, each byte spreads to 24 bits, shifted to position i
-    unsigned long long lo = 0, hi = 0;  // bits [0..63] and [64..95]
+        unsigned long long lo = 0, hi = 0;  // bits [0..63] and [64..95]
 
-    for (int i = 0; i < 3; i++) {
-        for (int byte_idx = 0; byte_idx < 4; byte_idx++) {
-            unsigned int byte_val = (bit[i] >> (8 * byte_idx)) & 0xFF;
-            unsigned int spread   = d_spread3[byte_val];          // 24-bit spread
-            int base_pos = 24 * byte_idx + i;                   // output bit start
-            if (base_pos < 64)
-                lo |= (unsigned long long)spread << base_pos;
+        for (int i = 0; i < 3; i++) {
+            for (int byte_idx = 0; byte_idx < 4; byte_idx++) {
+                unsigned int byte_val = (bit[i] >> (8 * byte_idx)) & 0xFF;
+                unsigned int spread   = d_spread3[byte_val];          // 24-bit spread
+                int base_pos = 24 * byte_idx + i;                   // output bit start
+                if (base_pos < 64)
+                    lo |= (unsigned long long)spread << base_pos;
 
-            if (base_pos >= 64)
-                hi |= (unsigned long long)spread << (base_pos - 64);   // was: >> (64 - base_pos) → UB
-            else if (base_pos + 24 > 64)
-                hi |= (unsigned long long)spread >> (64 - base_pos);   // straddle case: correct
+                if (base_pos >= 64)
+                    hi |= (unsigned long long)spread << (base_pos - 64);   // was: >> (64 - base_pos) → UB
+                else if (base_pos + 24 > 64)
+                    hi |= (unsigned long long)spread >> (64 - base_pos);   // straddle case: correct
+            }
         }
-    }
 
     /* Step 6: Write output */
-    if (tid % 32 == 0) {
         block_tq3 * blk = (block_tq3 *)((uint8_t *)dst +
                            vec_idx * sizeof(block_tq3));
         if (tid == 0) {
